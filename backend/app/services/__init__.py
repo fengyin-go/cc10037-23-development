@@ -6,6 +6,10 @@ from app.services.pipeline_def import PipelineDefService
 from app.services.task_node import TaskNodeService
 from app.services.quality_rule import QualityRuleService
 from app.services.validation_run import ValidationRunService
+from app.services.reference_dictionary import (
+    ReferenceDictionaryChangeService,
+    ReferenceDictionaryService,
+)
 from app.services.depend_scheduler import DependSchedulerService
 from app.services.sliding_window import SlidingWindowService
 from app.services.rerun_compensation import RerunCompensationService
@@ -26,6 +30,8 @@ SERVICES: dict[str, BaseModuleService] = {
     "task_node": TaskNodeService(),
     "quality_rule": QualityRuleService(),
     "validation_run": ValidationRunService(),
+    "reference_dictionary_version": ReferenceDictionaryService(),
+    "reference_dictionary_change": ReferenceDictionaryChangeService(),
     "depend_scheduler": DependSchedulerService(),
     "sliding_window": SlidingWindowService(),
     "rerun_compensation": RerunCompensationService(),

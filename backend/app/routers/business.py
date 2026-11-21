@@ -47,7 +47,8 @@ def run_quality_gate(body: dict[str, Any]) -> dict[str, Any]:
     body:
       pipeline_id, rules: [{"rule_id", "rule_name", "target_table", "check_field",
                              "check_type", "threshold", "level", "extra": {}}],
-      sample_data: [dict]
+      sample_data: [dict],
+      reference_version_id (可选): 已确认的地区引用字典版本 ID
     """
     pipeline_id = body["pipeline_id"]
     rules = [
@@ -63,14 +64,45 @@ def run_quality_gate(body: dict[str, Any]) -> dict[str, Any]:
         )
         for r in body.get("rules", [])
     ]
+
+    reference_version = None
+    if body.get("reference_version_id") is not None:
+        from app.services.reference_dictionary import service as version_service
+
+        try:
+            version = version_service.require_version(int(body["reference_version_id"]))
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        reference_version = {
+            "ref_key": version.dictionary_key,
+            "version_id": version.version_id,
+            "version_no": version.version_no,
+            "column": version.column_name,
+            "table": version.table_name,
+            "execution_date": version.execution_date,
+            "frozen_at": version.frozen_at,
+            "confirmed": version.confirmed,
+            "entries": version.snapshot(),
+        }
+
     result = _orchestrator.run_quality_gate(
-        pipeline_id, rules, body.get("sample_data", []),
+        pipeline_id, rules, body.get("sample_data", []), reference_version,
     )
     return {
         "pipeline_id": result.pipeline_id,
         "overall_pass": result.overall_pass,
         "decision": result.decision,
         "failed_ratio": result.failed_ratio,
+        "reference_version": (
+            {
+                "引用版本ID": reference_version["version_id"],
+                "引用版本号": reference_version["version_no"],
+                "引用列": reference_version["column"],
+                "字典执行日期": reference_version["execution_date"],
+                "字典冻结时间": reference_version["frozen_at"],
+            }
+            if reference_version else None
+        ),
         "results": result.results,
         "triggered_alerts": [
             {"rule_id": a.rule_id, "rule_name": a.rule_name,

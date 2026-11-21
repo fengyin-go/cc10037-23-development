@@ -16,7 +16,8 @@ class QualityRuleService(BaseModuleService):
     MODULE = "quality_rule"
     ENTITY = "校验规则"
     OPERATION_TERM = "校验"
-    LIST_FIELDS = ["规则名称", "目标表", "校验字段", "校验类型", "阈值设定", "阀值动作", "校验级别"]
+    LIST_FIELDS = ["规则名称", "目标表", "校验字段", "校验类型", "阈值设定", "阀值动作",
+                   "校验级别", "引用表", "引用列", "引用字典"]
     REQUIRED_FIELDS = ["规则名称", "目标表", "校验字段"]
     STATUS_ORDER = ["草稿", "已启用", "已暂停", "已废弃"]
     ACTION_RULES = {"启用规则": "草稿", "暂停规则": "已启用", "废弃规则": "已暂停"}
@@ -144,3 +145,30 @@ class QualityRuleService(BaseModuleService):
         if entry:
             entry["last_operated_at"] = datetime.now().isoformat()
         return entry, msg
+
+    def reference_rule(self, entry_id: int) -> dict[str, Any]:
+        """读取引用完整性规则的绑定：引用表、引用列、引用字典，不再只认表名。"""
+        entry = store.find(self.MODULE, entry_id)
+        if entry is None:
+            return {"ok": False, "message": f"校验规则 {entry_id} 不存在或已归档"}
+        check_type = str(entry.get("校验类型", ""))
+        bound = check_type.upper() == "REFERENCE" or bool(entry.get("引用列"))
+        return {
+            "ok": True,
+            "规则ID": entry_id,
+            "规则名称": entry.get("规则名称"),
+            "校验类型": check_type,
+            "引用完整性规则": bound,
+            "引用字典": entry.get("引用字典", ""),
+            "引用表": entry.get("引用表", ""),
+            "引用列": entry.get("引用列") or entry.get("校验字段", ""),
+            "校验字段": entry.get("校验字段", ""),
+            "阈值设定": entry.get("阈值设定"),
+            "校验级别": entry.get("校验级别"),
+            "阈值动作": entry.get("阀值动作"),
+            "说明": (
+                "引用校验按引用列逐行取值，必须绑定到具体引用字典版本；"
+                "表名只用于展示来源，不参与版本判定"
+                if bound else "非引用完整性规则"
+            ),
+        }

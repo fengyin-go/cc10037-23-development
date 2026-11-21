@@ -86,10 +86,29 @@ class ValidationEngine:
         }
         # 引用数据集（模拟引用完整性校验的查找表）
         self._reference_sets: dict[str, set[Any]] = {}
+        # 版本化引用字典：按字典键绑定一个明确冻结的版本，而不是按表名读“当前值”
+        self._reference_versions: dict[str, dict[str, Any]] = {}
 
     def set_reference(self, ref_key: str, values: set[Any]) -> None:
-        """预置引用查找集。"""
+        """预置引用查找集（无版本信息，仅用于非门店场景的兼容路径）。"""
         self._reference_sets[ref_key] = values
+
+    def set_reference_version(self, ref_key: str, version: dict[str, Any]) -> None:
+        """绑定一个已确认的引用字典版本。
+
+        version 至少包含：
+          version_id, version_no, column, execution_date, frozen_at, entries
+        entries 是 {门店代码: {region_code, region_name, ...}} 的冻结快照。
+        """
+        if not version.get("entries"):
+            raise ValueError(f"引用字典版本 {version.get('version_no', ref_key)} 没有条目快照")
+        if version.get("confirmed") is False:
+            raise ValueError(f"引用字典版本 {version.get('version_no')} 尚未确认，不能用于校验")
+        self._reference_versions[ref_key] = version
+
+    def clear_reference_version(self, ref_key: str) -> None:
+        """解绑版本，避免一批行使用的字典串到下一批。"""
+        self._reference_versions.pop(ref_key, None)
 
     def run(self, rule: QualityRule, rows: list[dict[str, Any]]) -> ValidationResult:
         checker = self._checkers.get(rule.check_type)
@@ -165,6 +184,12 @@ class ValidationEngine:
         self, rows: list[dict[str, Any]], rule: QualityRule
     ) -> tuple[int, int, list[dict[str, Any]]]:
         ref_key = rule.extra.get("reference_table", "")
+        version = self._reference_versions.get(ref_key) or self._reference_versions.get(
+            str(rule.extra.get("reference_dictionary", ""))
+        )
+        if version is not None:
+            return self._check_reference_version(rows, rule, version)
+
         ref_set = self._reference_sets.get(ref_key, set())
         passed = 0
         failed = 0
@@ -184,6 +209,44 @@ class ValidationEngine:
                         "row_index": i, rule.check_field: val,
                         "reason": f"引用缺失: {val} 不在 {ref_key} 中",
                     })
+        return passed, failed, samples
+
+    @staticmethod
+    def _check_reference_version(
+        rows: list[dict[str, Any]],
+        rule: QualityRule,
+        version: dict[str, Any],
+    ) -> tuple[int, int, list[dict[str, Any]]]:
+        """按冻结版本逐行校验，坏行样例带上取值依据和实际使用的版本。"""
+        entries: dict[str, Any] = version.get("entries") or {}
+        column = str(version.get("column") or rule.check_field)
+        version_no = version.get("version_no", "")
+        passed = 0
+        failed = 0
+        samples: list[dict[str, Any]] = []
+        for i, row in enumerate(rows):
+            val = row.get(column)
+            code = "" if val is None else str(val)
+            if code in entries:
+                passed += 1
+                continue
+            failed += 1
+            if len(samples) < 5:
+                samples.append({
+                    "row_index": i,
+                    column: val,
+                    "reason": f"引用缺失: {code or 'NULL'} 不在 {version.get('table', '')}({version_no}) 中",
+                    "引用版本ID": version.get("version_id"),
+                    "引用版本号": version_no,
+                    "字典执行日期": version.get("execution_date"),
+                    "字典冻结时间": version.get("frozen_at"),
+                    "引用列": column,
+                    "取值依据": (
+                        f"行字段 {column}={code or 'NULL'}；按 {version_no}"
+                        f"（执行日期 {version.get('execution_date')}，引用列 {column}）"
+                        f"冻结的 {len(entries)} 条条目匹配，无对应条目"
+                    ),
+                })
         return passed, failed, samples
 
     @staticmethod

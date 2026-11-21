@@ -54,6 +54,8 @@ npm run dev
 | 任务节点 | `task_node` | 处理节点 | 节点名称、所属管线、节点类型 |
 | 质量规则 | `quality_rule` | 校验规则 | 规则名称、目标表、校验字段 |
 | 质量执行 | `validation_run` | 校验批次 | 批次标识、目标表、校验分区 |
+| 引用字典版本 | `reference_dictionary_version` | 地区字典版本 | 引用版本号、执行日期、引用列、冻结时间 |
+| 字典变更台账 | `reference_dictionary_change` | 条目补录记录 | 门店代码、地区编码、派生版本号 |
 | 依赖调度 | `depend_scheduler` | 调度配置 | 配置名称、目标管线、触发方式 |
 | 滑动窗口 | `sliding_window` | 窗口配置 | 窗口名称、目标表、窗口字段 |
 | 回刷补偿 | `rerun_compensation` | 重跑任务 | 任务名称、目标管线、重跑范围 |
@@ -76,6 +78,38 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 地区引用字典版本
+
+门店订单的地区引用完整性不再按表名读取“当前字典”，而是绑定到一个冻结的字典版本：
+
+- `reference_dictionary_version` 持久化每个版本：执行日期、引用列、冻结时间和完整条目快照；
+  新增地区条目会派生新版本（`REGION-v2` → `REGION-v3`），旧版本保留为“历史”且只读。
+- 质量执行批次记录 `引用版本ID/引用版本号`，并保留 `样本行`、`坏行明细`、`取值依据`，
+  坏行率的分子（未匹配行数）与分母（样本行数）都由该版本解释。
+- 同一批行只允许按一个已确认版本计算；草稿/历史版本会被拒绝。
+- 复查（`POST /api/quality/validation-runs/{id}/review`）只读，不改写已归档样本计数。
+- 重算（`POST /api/quality/validation-runs/{id}/recompute`）另存新批次并保存使用的版本，
+  原批保持不变，可与 `POST /api/quality/validation-runs/compare` 对比原坏行是否通过。
+
+相关接口：
+
+```text
+GET  /api/quality/reference-versions
+POST /api/quality/reference-versions            补录条目并派生新版本
+GET  /api/quality/validation-runs/reference-summary
+GET  /api/quality/validation-runs/{id}/reference-evidence
+POST /api/quality/validation-runs/{id}/review
+POST /api/quality/validation-runs/{id}/recompute
+POST /api/quality/validation-runs/compare
+POST /api/business/quality/gate                 可选 reference_version_id
+```
+
+后端回归测试：
+
+```bash
+cd backend && .venv/bin/python -m unittest discover -s tests -t . -v
+```
 
 领域：数据工程
 子方向：数仓与数据湖

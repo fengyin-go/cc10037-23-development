@@ -200,9 +200,28 @@ class ETLOrchestrator:
         pipeline_id: str,
         rules: list[QualityRule],
         sample_data: list[dict[str, Any]],
+        reference_version: dict[str, Any] | None = None,
     ) -> QualityGateResponse:
-        """执行管线质量门禁。"""
-        result = self.validation.run_pipeline_quality(rules, sample_data, pipeline_id)
+        """执行管线质量门禁。
+
+        reference_version 非空时，REFERENCE 规则按该冻结版本校验，
+        同一批行只使用一个引用版本；执行完即解绑，避免串到下一批。
+        """
+        bound_key = ""
+        if reference_version is not None:
+            bound_key = str(
+                reference_version.get("ref_key")
+                or reference_version.get("table")
+                or "region_reference"
+            )
+            self.validation.set_reference_version(bound_key, reference_version)
+
+        try:
+            result = self.validation.run_pipeline_quality(rules, sample_data, pipeline_id)
+        finally:
+            if bound_key:
+                self.validation.clear_reference_version(bound_key)
+
         overall_pass = result["overall_pass"]
         failed_ratio = result["overall_failed_ratio"]
 
